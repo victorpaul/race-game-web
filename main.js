@@ -5,6 +5,7 @@ var rotationKey = "car_ROTATION";
 var stageAccess = null;
 var raceStarted = false;
 var container = null;
+var deletedPost;
 
 function orderCarsOnTheStart(){
   var y = 0;
@@ -22,7 +23,7 @@ function orderCarsOnTheStart(){
 window.onload = function(){
     var Q = window.Q = Quintus({ audioSupported: [ 'mp3' ] }).include("Sprites, Scenes,Anim,UI,Touch,Audio").setup({ width: 1920, height: 1080 }).touch().enableSound();
 
-    Q.load(["wind.png","song.mp3","3.png","1_animation.png","2_animation.png","4_animation.png"], function() {
+    Q.load(["arrow.png","wind.png","song.mp3","3.png","1_animation.png","2_animation.png","4_animation.png"], function() {
 
         Q.sheet("ment","2_animation.png",{tilew: 90,tileh: 45,sx: 0,sy: 0});
         Q.sheet("car","1_animation.png",{tilew: 75,tileh: 33,sx: 0,sy: 0});
@@ -34,26 +35,35 @@ window.onload = function(){
         Q.animations('pig', {run: { frames: [0,1,2], rate: 1/3,loop:true}});
         Q.animations('tank', {run: { frames: [0,1,2], rate: 1/3,loop:true}});
 
-        var fbRef = new Firebase("https://intense-heat-6899.firebaseio.com/racegame/" + gameName + "/cars");
-        fbRef.on("value", function(snapshot) {
+        var fbRef = new Firebase("https://intense-heat-6899.firebaseio.com/racegame/" + gameName);
+        fbRef.child("cars").on("value", function(snapshot) {
             var gotCars = snapshot.val();
 
             for(key in gotCars){
                 if(!cars[key] && stageAccess != null){
-                    cars[key] = new Q.Car();
+                    cars[key] = new Q.Car({direction:new Q.CarDirection()});
                     stageAccess.insert(cars[key]);
+                    stageAccess.insert(cars[key].p.direction);
+                    cars[key].play("run");
                     orderCarsOnTheStart();
                 }
 
                 var p = cars[key].p;
-                cars[key].play("run");
+
                 p.omega = gotCars[key][rotationKey];
                 if(p.omega < 10 && p.omega > -10){
                     p.omega = 0;
                 }
             }
-        }, function (errorObject) {
-            console.log("The read failed: " + errorObject.code);
+        });
+
+        fbRef.child("cars").on("child_removed", function(snapshot) {
+          if(cars[snapshot.key()]){
+            var car = cars[snapshot.key()]
+            car.p.direction.destroy();
+            car.destroy();
+            delete cars[snapshot.key()];
+          }
         });
 
         Q.Sprite.extend("Wind", {
@@ -70,6 +80,28 @@ window.onload = function(){
             },
             step: function(dt) {
                  this.p.angle += dt * (this.p.omega);
+            }
+        });
+
+        fbRef.child("cars").on("child_removed", function(snapshot) {
+          if(cars[snapshot.key()]){
+            var car = cars[snapshot.key()].destroy();
+            delete cars[snapshot.key()];
+          }
+        });
+
+        Q.Sprite.extend("CarDirection", {
+            init: function(p) {
+                p = p || {};
+                p.asset = "arrow.png";
+                p.points = [[0,0]];
+                p.x = 10;
+                p.y = 500;
+                p.w = 1;
+                p.h = 1;
+                p.cy = 300;
+                p.scale = 0.03;
+                this._super(p);
             }
         });
 
@@ -103,6 +135,7 @@ window.onload = function(){
                         p.h = 45;
                         break;
                 }
+                p.z = 1;
                 p.passedControlPoints = 0;
                 p.points = [[-(p.w/2),-(p.h/2)],[p.w/2,-(p.h/2)],[p.w/2,p.h/2],[-(p.w/2),p.h/2]];
                 p.cx = p.w/2;
@@ -116,47 +149,52 @@ window.onload = function(){
                 this.add("animation");
             },
             step: function(dt) {
-              if(raceStarted == false){
-                return;
-              }
                 var p = this.p;
-
-                p.angle += dt * (p.omega * 2);
+                var r = p.angle * (Math.PI/180);
 
                 if(raceStarted){
-                    var r = p.angle * (Math.PI/180);
-                    p.dx = Math.floor(Math.cos(r)*p.speed);
-                    p.dy = Math.floor(Math.sin(r)*p.speed);
-                    p.x += p.dx * dt;
-                    p.y += p.dy * dt;
-                }
+                  p.angle += dt * (p.omega * 2);
 
-                var maxCol = 4, collided = false;
-                while((collided = this.stage.search(this)) && maxCol > 0) {
-                    if(collided) {
-                        if(collided.obj.p.counter){
+                  if(raceStarted){
+                      p.dx = Math.floor(Math.cos(r)*p.speed);
+                      p.dy = Math.floor(Math.sin(r)*p.speed);
+                      p.x += p.dx * dt;
+                      p.y += p.dy * dt;
+                  }
 
-                            if(collided.obj.p.finish){
-                                if(p.passedControlPoints == true){
-                                    p.passedControlPoints = false;
-                                    raceStarted = false;
-                                    container = stageAccess.insert(new Q.UI.Container({fill: "gray",border: 5,shadow: 10,shadowColor: "rgba(0,0,0,0.5)",y: 50,x: 150}));
-                                    stageAccess.insert(new Q.UI.Text({label: "Dat Player is a winner!",color: "white",x: 0,y: 0}),container);
-                                    container.fit(20,20);
-                                    orderCarsOnTheStart();
-                                }
-                            }else{
-                              p.passedControlPoints = true
-                            }
-                        }else{
-                            //this.p.x -= collided.separate[0];
-                            //this.p.y -= collided.separate[1];
-                            this.p.x = collided.normalX;
-                            this.p.y = collided.normalY;
-                        }
-                    }
-                    maxCol--;
+                  var maxCol = 6, collided = false;
+                  while((collided = this.stage.search(this)) && maxCol > 0) {
+                      if(collided) {
+                          if(collided.obj.p.counter){
+
+                              if(collided.obj.p.finish){
+                                  if(p.passedControlPoints == true){
+                                      p.passedControlPoints = false;
+                                      raceStarted = false;
+                                      container = stageAccess.insert(new Q.UI.Container({fill: "gray",border: 5,shadow: 10,shadowColor: "rgba(0,0,0,0.5)",y: 50,x: 150}));
+                                      stageAccess.insert(new Q.UI.Text({label: "Dat Player is a winner!",color: "white",x: 0,y: 0}),container);
+                                      container.fit(20,20);
+                                      orderCarsOnTheStart();
+                                  }
+                              }else{
+                                p.passedControlPoints = true
+                              }
+                          }else{
+                              //this.p.x -= collided.separate[0];
+                              //this.p.y -= collided.separate[1];
+                              this.p.x +=collided.normalX;
+                              this.p.y +=collided.normalY;
+                          }
+                      }
+                      maxCol--;
+                  }
                 }
+                var cursor = p.direction.p;
+
+                cursor.x = this.p.x + Math.floor(Math.cos(r)*40);
+                cursor.y = this.p.y + Math.floor(Math.sin(r)*40);
+                cursor.angle = this.p.angle + this.p.omega;
+
             }
         });
 
@@ -250,12 +288,13 @@ window.onload = function(){
             stageAccess.insert(new Q.Wall({counter:true, w:500,h:10,x:1380,y:420}));// tree
             stageAccess.insert(new Q.Wall({counter:true,w:10,h:500,x:700,y:820,angle:350,finish:true}));// tree
 
-            stageAccess.insert(new Q.Wind({x:184,y:850}));// wind
-
             stage.insert(new Q.UI.Button({label: "Press to START RACE!",y: 70,x: 1750,fill: "#990000",border: 5,shadow: 10,shadowColor: "rgba(0,0,0,0.5)"}, function() {
-              Q.audio.play('song.mp3');
+              //Q.audio.play('song.mp3');
               var startIn = 3;
               var counter = function(){
+
+                  fbRef.update({setCenter:Math.floor((Math.random() * 900000) + 1) + "-" + Math.floor((Math.random() * 900000) + 1)});
+
                   container = stage.insert(new Q.UI.Container({fill: "gray",border: 5,shadow: 10,shadowColor: "rgba(0,0,0,0.5)",y: 50,x: 150}));
                   stage.insert(new Q.UI.Text({label: "Starts in " + startIn,color: "white",x: 0,y: 0}),container);
                   container.fit(20,20);
@@ -269,11 +308,16 @@ window.onload = function(){
               };
             counter();
             }));
+
+          stageAccess.insert(new Q.Wind({x:184,y:850,z:2000}));
         }));
+
+
+
 
         Q.stageScene("Race");
 
-/*
+        /*
         Q.debug = true;
         Q.debugFill = true;
         //*/
